@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Food Waste Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f4f4f4; }
+    header { background: #2d6a4f; color: #fff; padding: 16px; text-align: center; }
+    main { max-width: 800px; margin: 24px auto; background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    form input { padding: 10px; font-size: 14px; }
+    form button { grid-column: span 2; padding: 12px; background: #40916c; color: #fff; border: none; cursor: pointer; border-radius: 4px; font-size: 15px; }
+    form button:hover { background: #1b4332; }
+    .error { color: #c0392b; margin-bottom: 12px; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { padding: 12px; border-bottom: 1px solid #e0e0e0; }
+    .item { font-weight: bold; }
+    .meta { color: #555; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Food Waste Tracker</h1>
+  </header>
+  <main>
+    <div id="error" class="error" hidden></div>
+    <form id="donation-form">
+      <input id="item" type="text" placeholder="Item (e.g., Bread)" required />
+      <input id="quantity" type="text" placeholder="Quantity (e.g., 5 loaves)" required />
+      <input id="location" type="text" placeholder="Location (e.g., Downtown)" required />
+      <button type="submit">Add Donation</button>
+    </form>
+    <h3>Recent Donations</h3>
+    <ul id="donations"></ul>
+  </main>
+
+  <script>
+    const form = document.getElementById('donation-form');
+    const list = document.getElementById('donations');
+    const errorBox = document.getElementById('error');
+
+    const showError = (message) => {
+      errorBox.textContent = message;
+      errorBox.hidden = !message;
+    };
+
+    const renderDonations = (donations) => {
+      list.innerHTML = '';
+      if (!donations.length) {
+        list.innerHTML = '<li>No donations yet.</li>';
+        return;
+      }
+      donations.forEach(({ item, quantity, location, created_at }) => {
+        const li = document.createElement('li');
+        li.innerHTML = \`
+          <div class="item">\${item}</div>
+          <div class="meta">Quantity: \${quantity} | Location: \${location} | Added: \${new Date(created_at).toLocaleString()}</div>
+        \`;
+        list.appendChild(li);
+      });
+    };
+
+    const fetchDonations = async () => {
+      try {
+        const res = await fetch('/api/donations');
+        const data = await res.json();
+        renderDonations(data);
+      } catch (err) {
+        showError('Failed to load donations.');
+        console.error(err);
+      }
+    };
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      showError('');
+
+      const payload = {
+        item: document.getElementById('item').value.trim(),
+        quantity: document.getElementById('quantity').value.trim(),
+        location: document.getElementById('location').value.trim(),
+      };
+
+      if (!payload.item || !payload.quantity || !payload.location) {
+        showError('Please fill out all fields.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/donations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const { error } = await res.json();
+          throw new Error(error || 'Request failed');
+        }
+
+        form.reset();
+        await fetchDonations();
+      } catch (err) {
+        showError(err.message || 'Could not save donation.');
+      }
+    });
+
+    fetchDonations();
+  </script>
+</body>
+</html>
