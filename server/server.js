@@ -212,13 +212,47 @@ app.get('/api/categories', async (_req, res) => {
   }
 });
 
+// User search (existing accounts only)
+app.get('/api/users/search', authMiddleware, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.status(400).json({ error: 'q must have at least 2 characters' });
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { name: { contains: q } },
+              { email: { contains: q } },
+            ],
+          },
+          { id: { not: req.user.id } },
+        ],
+      },
+      select: { id: true, name: true, email: true },
+      take: 10,
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(users);
+  } catch (err) {
+    console.error('Error searching users:', err);
+    res.status(500).json({ error: 'Failed to search users' });
+  }
+});
+
 // Groups
 app.get('/api/groups', authMiddleware, async (req, res) => {
   try {
     const user = req.user;
     const groups = await prisma.friendGroup.findMany({
-      where: { ownerId: user.id },
-      include: { members: { include: { user: true } } },
+      where: {
+        OR: [
+          { ownerId: user.id },
+          { members: { some: { userId: user.id } } },
+        ],
+      },
+      include: { members: { include: { user: true } }, owner: true },
+      orderBy: { createdAt: 'desc' },
     });
     res.json(groups);
   } catch (err) {
@@ -241,19 +275,22 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/groups/:id/members', authMiddleware, async (req, res) => {
-  const { userName, tag } = req.body;
+  const { userId, tag } = req.body;
   const groupId = Number(req.params.id);
-  if (!userName) return res.status(400).json({ error: 'userName required' });
+  if (!userId) return res.status(400).json({ error: 'userId required' });
   try {
     const owner = req.user;
     const group = await prisma.friendGroup.findFirst({ where: { id: groupId, ownerId: owner.id } });
     if (!group) return res.status(404).json({ error: 'group not found' });
 
-    const friend = await prisma.user.upsert({
-      where: { email: `${userName.toLowerCase().replace(/\s+/g, '')}@friends.local` },
-      update: { name: userName },
-      create: { name: userName, email: `${userName.toLowerCase().replace(/\s+/g, '')}@friends.local` },
+    const friend = await prisma.user.findUnique({ where: { id: Number(userId) } });
+    if (!friend) return res.status(404).json({ error: 'user not found' });
+
+    const existingMember = await prisma.groupMember.findFirst({
+      where: { groupId, userId: friend.id },
+      include: { user: true },
     });
+    if (existingMember) return res.status(409).json({ error: 'User already in group' });
 
     const member = await prisma.groupMember.create({
       data: { groupId, userId: friend.id, tag: tag || null },
@@ -416,6 +453,60 @@ app.get('/api/groups/:id/items', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error fetching group items:', err);
     res.status(500).json({ error: 'Failed to fetch group items' });
+  }
+});
+
+// Group chat: list messages
+app.get('/api/groups/:id/messages', authMiddleware, async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const user = req.user;
+    const group = await prisma.friendGroup.findUnique({
+      where: { id },
+      include: { members: true },
+    });
+    if (!group) return res.status(404).json({ error: 'group not found' });
+    const isOwner = group.ownerId === user.id;
+    const isMember = group.members.some((m) => m.userId === user.id);
+    if (!isOwner && !isMember) return res.status(403).json({ error: 'Not allowed' });
+
+    const messages = await prisma.groupMessage.findMany({
+      where: { groupId: id },
+      include: { author: true },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    });
+    res.json(messages);
+  } catch (err) {
+    console.error('Error fetching messages:', err);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// Group chat: post message
+app.post('/api/groups/:id/messages', authMiddleware, async (req, res) => {
+  const id = Number(req.params.id);
+  const { content } = req.body;
+  if (!content || !content.trim()) return res.status(400).json({ error: 'content required' });
+  try {
+    const user = req.user;
+    const group = await prisma.friendGroup.findUnique({
+      where: { id },
+      include: { members: true },
+    });
+    if (!group) return res.status(404).json({ error: 'group not found' });
+    const isOwner = group.ownerId === user.id;
+    const isMember = group.members.some((m) => m.userId === user.id);
+    if (!isOwner && !isMember) return res.status(403).json({ error: 'Not allowed' });
+
+    const message = await prisma.groupMessage.create({
+      data: { groupId: id, authorId: user.id, content: content.trim() },
+      include: { author: true },
+    });
+    res.status(201).json(message);
+  } catch (err) {
+    console.error('Error posting message:', err);
+    res.status(500).json({ error: 'Failed to post message' });
   }
 });
 

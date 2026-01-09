@@ -26,6 +26,7 @@ model User {
   groups    FriendGroup[] @relation("GroupOwner")
   claims    Claim[]      @relation("ClaimUser")
   members   GroupMember[]
+  messages  GroupMessage[]
   createdAt DateTime     @default(now()) @map("created_at")
 }
 
@@ -59,6 +60,7 @@ model FriendGroup {
   ownerId   Int
   members   GroupMember[]
   shares    GroupShare[]
+  messages  GroupMessage[]
   createdAt DateTime      @default(now()) @map("created_at")
 }
 
@@ -92,6 +94,16 @@ model GroupShare {
   createdAt DateTime    @default(now()) @map("created_at")
 
   @@unique([itemId, groupId])
+}
+
+model GroupMessage {
+  id        Int         @id @default(autoincrement())
+  group     FriendGroup @relation(fields: [groupId], references: [id])
+  groupId   Int
+  author    User        @relation(fields: [authorId], references: [id])
+  authorId  Int
+  content   String
+  createdAt DateTime    @default(now()) @map("created_at")
 }
 
 enum ItemStatus {

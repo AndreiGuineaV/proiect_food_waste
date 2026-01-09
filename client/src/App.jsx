@@ -32,12 +32,16 @@ function App() {
   const [myClaims, setMyClaims] = useState([]);
   const [shareLink, setShareLink] = useState('');
   const [error, setError] = useState('');
+  const [groupMessages, setGroupMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
 
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [newItem, setNewItem] = useState({ title: '', categoryId: '', expiresAt: '' });
   const [newGroup, setNewGroup] = useState({ name: '' });
-  const [newMember, setNewMember] = useState({ userName: '', tag: '', groupId: '' });
+  const [newMember, setNewMember] = useState({ userId: '', tag: '', groupId: '' });
+  const [memberSearch, setMemberSearch] = useState('');
+  const [memberResults, setMemberResults] = useState([]);
   const [newClaim, setNewClaim] = useState({ itemId: '' });
   const [loading, setLoading] = useState(false);
   const inviteBase = typeof window !== 'undefined' ? window.location.origin : '';
@@ -154,6 +158,25 @@ function App() {
     }
   };
 
+  const searchUsers = async (value) => {
+    setMemberSearch(value);
+    setNewMember((prev) => ({ ...prev, userId: '' }));
+    if (!value.trim() || value.trim().length < 2) {
+      setMemberResults([]);
+      return;
+    }
+    try {
+      const results = await fetchJson(
+        `${API_BASE}/api/users/search?q=${encodeURIComponent(value.trim())}`,
+        {},
+        token
+      );
+      setMemberResults(results);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const addGroup = async (e) => {
     e.preventDefault();
     if (!newGroup.name) return setError('Nume grup necesar.');
@@ -172,16 +195,21 @@ function App() {
 
   const addMember = async (e) => {
     e.preventDefault();
-    if (!newMember.userName || !newMember.groupId) {
-      return setError('Alege grup și nume prieten.');
+    if (!newMember.userId || !newMember.groupId) {
+      return setError('Alege grup și un utilizator existent.');
     }
     try {
       await fetchJson(`${API_BASE}/api/groups/${newMember.groupId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: newMember.userName, tag: newMember.tag }),
+        body: JSON.stringify({
+          userId: Number(newMember.userId),
+          tag: newMember.tag,
+        }),
       }, token);
-      setNewMember({ userName: '', tag: '', groupId: '' });
+      setNewMember({ userId: '', tag: '', groupId: '' });
+      setMemberSearch('');
+      setMemberResults([]);
       await loadAll();
     } catch (err) {
       setError(err.message);
@@ -198,6 +226,24 @@ function App() {
     }
   };
 
+  const loadGroupMessages = async (groupId) => {
+    if (!groupId) return;
+    try {
+      const data = await fetchJson(`${API_BASE}/api/groups/${groupId}/messages`, {}, token);
+      setGroupMessages(data);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const selectGroup = async (groupId) => {
+    setSelectedGroup(groupId);
+    setGroupItems([]);
+    setGroupMessages([]);
+    if (!groupId) return;
+    await Promise.all([loadGroupItems(groupId), loadGroupMessages(groupId)]);
+  };
+
   const shareToGroup = async (e) => {
     e.preventDefault();
     if (!selectedGroup || !newClaim.itemId) {
@@ -210,6 +256,22 @@ function App() {
         body: JSON.stringify({ itemId: Number(newClaim.itemId) }),
       }, token);
       await loadGroupItems(selectedGroup);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!selectedGroup || !newMessage.trim()) return;
+    try {
+      await fetchJson(`${API_BASE}/api/groups/${selectedGroup}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: newMessage }),
+      }, token);
+      setNewMessage('');
+      await loadGroupMessages(selectedGroup);
     } catch (err) {
       setError(err.message);
     }
@@ -465,13 +527,38 @@ function App() {
                   </select>
                 </label>
                 <label>
-                  <span>Nume prieten</span>
+                  <span>Caută utilizator (minim 2 caractere)</span>
                   <input
-                    value={newMember.userName}
-                    onChange={(e) => setNewMember({ ...newMember, userName: e.target.value })}
+                    value={memberSearch}
+                    onChange={(e) => searchUsers(e.target.value)}
                     placeholder="Ex: Ana"
                   />
                 </label>
+                {memberResults.length > 0 && (
+                  <div className="list" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                    {memberResults.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        className="list-item"
+                        onClick={() => {
+                          setNewMember({ ...newMember, userId: String(u.id) });
+                          setMemberSearch(u.name);
+                        }}
+                        style={{
+                          textAlign: 'left',
+                          background: newMember.userId === String(u.id) ? '#eef6ff' : 'transparent',
+                        }}
+                      >
+                        <div className="item-title">{u.name}</div>
+                        <div className="item-meta">{u.email}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {newMember.userId && (
+                  <p className="muted">Utilizator selectat: {memberSearch}</p>
+                )}
                 <label>
                   <span>Tag</span>
                   <input
@@ -495,7 +582,7 @@ function App() {
                       Link invitație: <span className="muted">{`${inviteBase}?group=${g.id}`}</span>
                     </div>
                 <div className="actions" style={{ marginTop: '8px' }}>
-                  <button className="ghost" onClick={() => { setSelectedGroup(String(g.id)); loadGroupItems(String(g.id)); }}>
+                  <button className="ghost" onClick={() => { selectGroup(String(g.id)); }}>
                     Vezi alimente în grup
                   </button>
                 </div>
@@ -571,7 +658,7 @@ function App() {
                   <span>Grup</span>
                   <select
                     value={selectedGroup}
-                    onChange={(e) => { setSelectedGroup(e.target.value); loadGroupItems(e.target.value); }}
+                    onChange={(e) => { selectGroup(e.target.value); }}
                   >
                     <option value="">Alege grup</option>
                     {groups.map((g) => (
@@ -617,6 +704,43 @@ function App() {
                       ))}
                     </ul>
                   )}
+                </>
+              )}
+            </section>
+
+            <section className="panel">
+              <h2>Chat grup</h2>
+              {!selectedGroup ? (
+                <p className="muted">Selectează un grup pentru a vedea discuția.</p>
+              ) : (
+                <>
+                  <div className="chat-box" style={{ maxHeight: '240px', overflowY: 'auto', marginBottom: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px' }}>
+                    {groupMessages.length === 0 ? (
+                      <p className="muted">Încă nu există mesaje.</p>
+                    ) : (
+                      groupMessages.map((m) => (
+                        <div key={m.id} style={{ marginBottom: '8px' }}>
+                          <div className="item-title" style={{ fontSize: '14px' }}>{m.author?.name || 'Utilizator'}</div>
+                          <div className="item-meta" style={{ fontSize: '12px' }}>
+                            {new Date(m.createdAt).toLocaleString()}
+                          </div>
+                          <div>{m.content}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <form className="form" onSubmit={sendMessage}>
+                    <label>
+                      <span>Mesaj</span>
+                      <textarea
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        rows={3}
+                        placeholder="Scrie un mesaj pentru grup"
+                      />
+                    </label>
+                    <button type="submit">Trimite</button>
+                  </form>
                 </>
               )}
             </section>
