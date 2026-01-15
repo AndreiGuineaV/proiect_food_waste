@@ -327,7 +327,10 @@ app.get('/api/claims/for-owner', authMiddleware, async (req, res) => {
   try {
     const user = req.user;
     const claims = await prisma.claim.findMany({
-      where: { item: { ownerId: user.id } },
+      where: { 
+        item: { ownerId: user.id },
+        status: 'PENDING' // <--- IMPORTANTE: Aducem doar cererile care așteaptă răspuns
+      },
       include: { claimer: true, item: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -356,24 +359,47 @@ app.get('/api/claims/mine', authMiddleware, async (req, res) => {
 app.post('/api/claims/:id/decision', authMiddleware, async (req, res) => {
   const { decision } = req.body;
   const id = Number(req.params.id);
+
   if (!['ACCEPTED', 'REJECTED'].includes(decision)) {
     return res.status(400).json({ error: 'decision must be ACCEPTED or REJECTED' });
   }
+
   try {
     const user = req.user;
-    const claim = await prisma.claim.findUnique({ where: { id }, include: { item: true } });
+    const claim = await prisma.claim.findUnique({ 
+      where: { id }, 
+      include: { item: true } 
+    });
+
     if (!claim || claim.item.ownerId !== user.id) {
       return res.status(403).json({ error: 'Not allowed' });
     }
-    const updated = await prisma.claim.update({
+
+    const updatedClaim = await prisma.claim.update({
       where: { id },
       data: { status: decision, decidedAt: new Date() },
       include: { item: true, claimer: true },
     });
+
     if (decision === 'ACCEPTED') {
-      await prisma.foodItem.update({ where: { id: claim.itemId }, data: { status: 'CLAIMED' } });
+      await prisma.foodItem.update({ 
+        where: { id: claim.itemId }, 
+        data: { status: 'CLAIMED' } 
+      });
+      
+      await prisma.claim.updateMany({
+        where: { itemId: claim.itemId, id: { not: id }, status: 'PENDING' },
+        data: { status: 'REJECTED', decidedAt: new Date() }
+      });
+
+    } else if (decision === 'REJECTED') {
+      await prisma.foodItem.update({ 
+        where: { id: claim.itemId }, 
+        data: { status: 'AVAILABLE' } 
+      });
     }
-    res.json(updated);
+
+    res.json(updatedClaim);
   } catch (err) {
     console.error('Error deciding claim:', err);
     res.status(500).json({ error: 'Failed to update claim' });
@@ -514,21 +540,30 @@ app.post('/api/groups/:id/messages', authMiddleware, async (req, res) => {
 app.post('/api/groups/:id/share', authMiddleware, async (req, res) => {
   const id = Number(req.params.id);
   const { itemId } = req.body;
+  
   if (!itemId) return res.status(400).json({ error: 'itemId required' });
+  
   try {
     const user = req.user;
+    
     const group = await prisma.friendGroup.findUnique({
       where: { id },
       include: { members: true },
     });
+    
     if (!group) return res.status(404).json({ error: 'group not found' });
     const isOwner = group.ownerId === user.id;
     const isMember = group.members.some((m) => m.userId === user.id);
     if (!isOwner && !isMember) return res.status(403).json({ error: 'Not allowed' });
 
     const item = await prisma.foodItem.findUnique({ where: { id: itemId } });
+    
     if (!item || item.ownerId !== user.id) {
       return res.status(403).json({ error: 'You can share only your own items' });
+    }
+
+    if (item.status === 'CLAIMED') {
+      return res.status(400).json({ error: 'Nu poți partaja un produs care a fost deja revendicat (claimed).' });
     }
 
     await prisma.groupShare.upsert({
@@ -544,7 +579,19 @@ app.post('/api/groups/:id/share', authMiddleware, async (req, res) => {
   }
 });
 
-// SPA fallback for any non-API route (Express 5 compatible)
+app.delete('/api/admin/reset-items', authMiddleware, async (req, res) => {
+  try {
+
+    const deleted = await prisma.groupMessage.deleteMany({});
+    
+    console.log(`Au fost șterse ${deleted.count} mesaje de grup.`);
+    res.json({ message: 'Toate mesajele de grup au fost șterse cu succes.' });
+  } catch (err) {
+    console.error('Eroare la ștergere:', err);
+    res.status(500).json({ error: 'Nu s-a putut șterge.' });
+  }
+});
+
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) return next();
 

@@ -304,22 +304,28 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision }),
       }, token);
-      await loadAll();
+
+      setOwnerClaims((prevClaims) => prevClaims.filter((c) => c.id !== id));
+
     } catch (err) {
       setError(err.message);
+      await loadAll(); 
     }
   };
 
-  const shareItem = async (itemId, network) => {
-    try {
-      const res = await fetchJson(`${API_BASE}/api/share`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId, network }),
-      }, token);
-      setShareLink(res.shareUrl);
-    } catch (err) {
-      setError(err.message);
+  const shareItem = (itemId, network) => {
+    
+    const appUrl = window.location.origin; 
+
+    if (network === 'facebook') {
+      // Deschide fereastra de share Facebook cu link-ul site-ului
+      const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(appUrl)}`;
+      window.open(fbUrl, '_blank', 'width=600,height=400');
+    } 
+    
+    else if (network === 'instagram') {
+      // Deschide Instagram
+      window.open('https://www.instagram.com/', '_blank');
     }
   };
 
@@ -629,24 +635,34 @@ function App() {
             </section>
 
             <section className="panel">
-              <h2>Share pe social</h2>
-              <p className="muted">Stub: generează link pentru rețele.</p>
-              <div className="actions">
-                {availableItems.slice(0, 3).map((i) => (
-                  <div key={i.id} className="share-row">
-                    <span>{i.title}</span>
-                    <div>
-                      <button onClick={() => shareItem(i.id, 'instagram')}>Instagram</button>
-                      <button className="ghost" onClick={() => shareItem(i.id, 'facebook')}>
-                        Facebook
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <h2>Share pe social (Produsele mele)</h2>
+              <p className="muted">Distribuie produsele tale disponibile pentru a le da mai repede.</p>
+              
+              {items.filter(i => i.status === 'AVAILABLE').length === 0 ? (
+                <p className="muted" style={{ marginTop: '10px' }}>
+                  Nu ai niciun produs marcat "Available". Mergi la Frigider și marchează unul.
+                </p>
+              ) : (
+                <div className="actions" style={{ flexDirection: 'column', gap: '10px' }}>
+                  {items
+                    .filter((i) => i.status === 'AVAILABLE') // Doar cele disponibile
+                    .map((i) => (
+                      <div key={i.id} className="share-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <span>{i.title}</span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => shareItem(i.id, 'instagram')}>Instagram</button>
+                          <button className="ghost" onClick={() => shareItem(i.id, 'facebook')}>
+                            Facebook
+                          </button>
+                        </div>
+                      </div>
+                  ))}
+                </div>
+              )}
+              
               {shareLink && (
                 <div className="alert">
-                  Link generat: <a href={shareLink}>{shareLink}</a>
+                  Link generat: <a href={shareLink} target="_blank" rel="noopener noreferrer">{shareLink}</a>
                 </div>
               )}
             </section>
